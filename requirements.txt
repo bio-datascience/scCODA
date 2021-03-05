@@ -5,10 +5,11 @@ matplotlib
 tensorflow==2.3.2
 tensorflow-probability==0.11.0
 arviz>=0.10
-scipy==1.4.1
+scipy
 anndata
 patsy
 sklearn
 scanpy
 statsmodels
-git+git://github.com/biocore/scikit-bio@master
+rpy2
+scikit-bio
