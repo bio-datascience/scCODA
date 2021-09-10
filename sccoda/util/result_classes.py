@@ -95,6 +95,11 @@ class CAResult(az.InferenceData):
         self.sampling_stats = sampling_stats
         self.model_specs = model_specs
 
+        if "ind" in list(self.posterior.data_vars):
+            self.is_sccoda = True
+        else:
+            self.is_sccoda = False
+
         intercept_df, effect_df = self.summary_prepare()
 
         self.intercept_df = intercept_df
@@ -102,6 +107,7 @@ class CAResult(az.InferenceData):
 
     def summary_prepare(
             self,
+            est_fdr: float = 0.05,
             *args,
             **kwargs
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -111,6 +117,8 @@ class CAResult(az.InferenceData):
 
         Parameters
         ----------
+        est_fdr
+            Desired FDR value
         args
             Passed to ``az.summary``
         kwargs
@@ -156,11 +164,36 @@ class CAResult(az.InferenceData):
 
         # Calculation of columns that are not from az.summary
         intercept_df = self.complete_alpha_df(intercept_df)
-        effect_df = self.complete_beta_df(intercept_df, effect_df)
+        effect_df = self.complete_beta_df(intercept_df, effect_df, est_fdr)
 
         # Give nice column names, remove unnecessary columns
         hdis = intercept_df.columns[intercept_df.columns.str.contains("hdi")]
         hdis_new = hdis.str.replace("hdi_", "HDI ")
+
+
+        # Credible interval
+        if self.is_sccoda is True:
+            ind_post = self.posterior["ind"]
+
+            b_raw_sel = self.posterior["b_raw"] * ind_post.where(ind_post >= 1e-3)
+
+            res = az.convert_to_inference_data(b_raw_sel)
+
+            summary_sel = az.summary(res, kind="stats", var_names=["x"], skipna=True, *args, **kwargs)
+
+            ref_index = self.model_specs["reference"]
+            n_conditions = len(self.posterior.coords["covariate"])
+            n_cell_types = len(self.posterior.coords["cell_type"])
+
+            def insert_row(idx, df, df_insert):
+                return df.iloc[:idx, ].append(df_insert).append(df.iloc[idx:, ]).reset_index(drop=True)
+
+            for i in range(n_conditions):
+                summary_sel = insert_row((i*n_cell_types) + ref_index, summary_sel,
+                                         pd.DataFrame.from_dict(data={"mean": [0], "sd": [0], hdis[0]: [0], hdis[1]: [0]}))
+
+            effect_df.loc[:, hdis[0]] = list(summary_sel[hdis[0]])
+            effect_df.loc[:, hdis[1]] = list(summary_sel.loc[:, hdis[1]])
 
         intercept_df = intercept_df.loc[:, ["final_parameter", hdis[0], hdis[1], "sd", "expected_sample"]].copy()
         intercept_df = intercept_df.rename(columns=dict(zip(
@@ -181,7 +214,8 @@ class CAResult(az.InferenceData):
     def complete_beta_df(
             self,
             intercept_df: pd.DataFrame,
-            effect_df: pd.DataFrame
+            effect_df: pd.DataFrame,
+            target_fdr: float=0.05,
     ) -> pd.DataFrame:
         """
         Evaluation of MCMC results for effect parameters. This function is only used within self.summary_prepare.
@@ -193,6 +227,8 @@ class CAResult(az.InferenceData):
             Intercept summary, see ``self.summary_prepare``
         effect_df
             Effect summary, see ``self.summary_prepare``
+        target_fdr
+            Desired FDR value
 
         Returns
         -------
@@ -218,15 +254,32 @@ class CAResult(az.InferenceData):
         effect_df.loc[:, "inclusion_prob"] = beta_inc_prob
         effect_df.loc[:, "mean_nonzero"] = beta_nonzero_mean
 
-        # Inclusion prob threshold value. For derivation of the functional form, see
-        # "scCODA: A Bayesian model for compositional single-cell data analysis" (Büttner, Ostner et al., 2020)
-        threshold = 1-(0.77/(beta_raw.shape[2]**0.29))
-        self.model_specs["threshold_prob"] = threshold
+        # Inclusion prob threshold value. Direct posterior probability approach cf. Newton et al. (2004)
+        if self.is_sccoda is True:
+            def opt_thresh(result, alpha):
 
-        # Decide whether betas are significant or not, set non-significant ones to 0
-        effect_df.loc[:, "final_parameter"] = np.where(effect_df.loc[:, "inclusion_prob"] > threshold,
-                                                      effect_df.loc[:, "mean_nonzero"],
-                                                      0)
+                incs = np.array(result.loc[result["inclusion_prob"] > 0, "inclusion_prob"])
+                incs[::-1].sort()
+
+                for c in np.unique(incs):
+                    fdr = np.mean(1 - incs[incs >= c])
+
+                    if fdr < alpha:
+                        # ceiling with 3 decimals precision
+                        c = np.floor(c * 10 ** 3) / 10 ** 3
+                        return c, fdr
+                return 1., 0
+
+            threshold, fdr_ = opt_thresh(effect_df, target_fdr)
+
+            self.model_specs["threshold_prob"] = threshold
+
+            # Decide whether betas are significant or not, set non-significant ones to 0
+            effect_df.loc[:, "final_parameter"] = np.where(effect_df.loc[:, "inclusion_prob"] >= threshold,
+                                                           effect_df.loc[:, "mean_nonzero"],
+                                                           0)
+        else:
+            effect_df.loc[:, "final_parameter"] = effect_df.loc[:, "mean_nonzero"]
 
         # Get expected sample, log-fold change
         D = len(effect_df.index.levels[0])
@@ -379,7 +432,8 @@ class CAResult(az.InferenceData):
         print("Data: %d samples, %d cell types" % data_dims)
         print("Reference index: %s" % str(self.model_specs["reference"]))
         print("Formula: %s" % self.model_specs["formula"])
-        print("Spike-and-slab threshold: {threshold:.3f}".format(threshold=self.model_specs["threshold_prob"]))
+        if self.is_sccoda:
+            print("Spike-and-slab threshold: {threshold:.3f}".format(threshold=self.model_specs["threshold_prob"]))
         print("")
         print("MCMC Sampling: Sampled {num_results} chain states ({num_burnin} burnin samples) in {duration:.3f} sec. "
               "Acceptance rate: {ar:.1f}%".format(num_results=self.sampling_stats["chain_length"],
@@ -483,7 +537,7 @@ class CAResult(az.InferenceData):
 
     def credible_effects(
             self,
-            inc_prob_threshold: float = None
+            est_fdr=None
     ) -> pd.Series:
 
         """
@@ -491,8 +545,8 @@ class CAResult(az.InferenceData):
 
         Parameters
         ----------
-        inc_prob_threshold
-            Inclusion probability threshold value. Must be between 0 and 1. Per default, the value depends on the number of cell types.
+        est_fdr
+            Estimated false discovery rate. Must be between 0 and 1
 
         Returns
         -------
@@ -502,13 +556,15 @@ class CAResult(az.InferenceData):
             Boolean values whether effects are credible under inc_prob_threshold
         """
 
-        if inc_prob_threshold is None:
-            beta_raw = np.array(self.posterior["beta"])[0]
-            inc_prob_threshold = 1 - (0.77 / (beta_raw.shape[2] ** 0.29))
-        elif inc_prob_threshold < 0 or inc_prob_threshold > 1:
-            raise ValueError("inc_prob_threshold must be between 0 and 1!")
+        if type(est_fdr) == float:
+            if est_fdr < 0 or est_fdr > 1:
+                raise ValueError("est_fdr must be between 0 and 1!")
+            else:
+                _, eff_df = self.summary_prepare(est_fdr=est_fdr)
+        else:
+            eff_df = self.effect_df
 
-        out = self.effect_df["Inclusion probability"] > inc_prob_threshold
+        out = eff_df["Final Parameter"] != 0
         out.rename("credible change")
 
         return out
@@ -531,3 +587,30 @@ class CAResult(az.InferenceData):
         """
         with open(path_to_file, "wb") as f:
             pkl.dump(self, file=f, protocol=4)
+
+    def set_fdr(
+            self,
+            est_fdr: float,
+            *args,
+            **kwargs):
+        """
+        Direct posterior probability approach to calculate credible effects while keeping the expected FDR at a certain level
+
+        Parameters
+        ----------
+        est_fdr
+            Desired FDR value
+        args
+            passed to self.summary_prepare
+        kwargs
+            passed to self.summary_prepare
+
+        Returns
+        -------
+        Adjusts self.intercept_df and self.effect_df
+        """
+
+        intercept_df, effect_df = self.summary_prepare(est_fdr=est_fdr, *args, **kwargs)
+
+        self.intercept_df = intercept_df
+        self.effect_df = effect_df
