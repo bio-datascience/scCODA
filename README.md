@@ -1,14 +1,14 @@
 # scCODA - Single-cell differential composition analysis 
 scCODA allows for identification of compositional changes in high-throughput sequencing count data, especially cell compositions from scRNA-seq.
 It also provides a framework for integration of cell-type annotated data directly from [scanpy](https://scanpy.readthedocs.io/en/stable/) and other sources.
-Aside from the scCODA model (Büttner, Ostner *et al* (2020)), the package also allows the easy application of other differential testing methods.
+Aside from the scCODA model (Büttner, Ostner *et al* (2021)), the package also allows the easy application of other differential testing methods.
 
-![scCODA](.github/Figures/Fig1_v10.png)
+![scCODA](.github/Figures/Figure1.png)
 
 The statistical methodology and benchmarking performance are described in:
  
-Büttner, Ostner *et al* (2020). **scCODA: A Bayesian model for compositional single-cell data analysis**
-([*BioRxiv*](https://www.biorxiv.org/content/10.1101/2020.12.14.422688v1))
+Büttner, Ostner *et al* (2021). **scCODA is A Bayesian model for compositional single-cell data analysis**
+([*Nature Communications*](https://www.nature.com/articles/s41467-021-27150-6))
 
 Code for reproducing the analysis from the paper is available [here](https://github.com/theislab/scCODA_reproducibility).
 
@@ -18,9 +18,9 @@ For further information on the scCODA package and model, please refer to the
 
 ## Installation
 
-Running the package requires a working Python environment (>=3.7).
+Running the package requires a working Python environment (>=3.8).
 
-This package uses the `tensorflow` (`==2.3.3`) and `tensorflow-probability` (`==0.11.0`) packages.
+This package uses the `tensorflow` (`>=2.4, <2.6`) and `tensorflow-probability` (`==0.12`) packages.
 The GPU computation features of these packages have not been tested with scCODA and are thus not recommended.
     
 **To install scCODA via pip, call**:
@@ -47,6 +47,9 @@ The GPU computation features of these packages have not been tested with scCODA 
 
     `python setup.py install`
 
+**Docker container**:
+
+We provide a Docker container image for scCODA (https://hub.docker.com/repository/docker/wollmilchsau/scanpy_sccoda).
 
 ## Usage
 

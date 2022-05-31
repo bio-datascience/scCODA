@@ -101,12 +101,14 @@ def from_scanpy_list(
         for s in samples:
 
             cell_counts, covs = read_anndata_one_sample(s, cell_type_identifier, covariate_key)
-            count_data = count_data.append(cell_counts, ignore_index=True)
-            covariate_data = covariate_data.append(pd.Series(covs), ignore_index=True)
+            cell_counts = pd.DataFrame(cell_counts).T
+            count_data = pd.concat([count_data, cell_counts])
+            covariate_data = pd.concat([covariate_data, pd.Series(covs).to_frame().T], ignore_index=True)
     elif covariate_df is not None:
         for s in samples:
             cell_counts = read_anndata_one_sample(s, cell_type_identifier)
-            count_data = count_data.append(cell_counts, ignore_index=True)
+            cell_counts = pd.DataFrame(cell_counts).T
+            count_data = pd.concat([count_data, cell_counts])
             covariate_data = covariate_df
     else:
         print("No covariate information specified!")
@@ -114,9 +116,13 @@ def from_scanpy_list(
 
     # Replace NaNs
     count_data = count_data.fillna(0)
+    covariate_data.index = covariate_data.index.astype(str)
+
+    var_dat = count_data.sum(axis=0).rename("n_cells").to_frame()
+    var_dat.index = var_dat.index.astype(str)
 
     return ad.AnnData(X=count_data.values,
-                      var=count_data.sum(axis=0).rename("n_cells").to_frame(),
+                      var=var_dat,
                       obs=covariate_data)
 
 
@@ -163,14 +169,16 @@ def from_scanpy_dir(
             adata = ad.read_h5ad(f)
 
             cell_counts, covs = read_anndata_one_sample(adata, cell_type_identifier, covariate_key)
-            count_data = count_data.append(cell_counts, ignore_index=True)
-            covariate_data = covariate_data.append(pd.Series(covs), ignore_index=True)
+            cell_counts = pd.DataFrame(cell_counts).T
+            count_data = pd.concat([count_data, cell_counts])
+            covariate_data = pd.concat([covariate_data, pd.Series(covs).to_frame().T], ignore_index=True)
     elif covariate_df is not None:
         for f in filenames:
             adata = ad.read_h5ad(f)
 
             cell_counts = read_anndata_one_sample(adata, cell_type_identifier)
-            count_data = count_data.append(cell_counts, ignore_index=True)
+            cell_counts = pd.DataFrame(cell_counts).T
+            count_data = pd.concat([count_data, cell_counts])
             covariate_data = covariate_df
     else:
         print("No covariate information specified!")
@@ -178,9 +186,13 @@ def from_scanpy_dir(
 
     # Replace NaNs
     count_data = count_data.fillna(0)
+    covariate_data.index = covariate_data.index.astype(str)
+
+    var_dat = count_data.sum(axis=0).rename("n_cells").to_frame()
+    var_dat.index = var_dat.index.astype(str)
 
     return ad.AnnData(X=count_data.values,
-                      var=count_data.sum(axis=0).rename("n_cells").to_frame(),
+                      var=var_dat,
                       obs=covariate_data)
 
 
@@ -199,6 +211,7 @@ def from_scanpy(
     and one column that specifies the grouping into samples.
     Covariates can either be specified via a key in adata.uns, or as a separate DataFrame.
 
+    NOTE: The order of samples in the returned dataset is determined by the first occurence of cells from each sample in `adata`
 
     Parameters
     ----------
@@ -222,19 +235,27 @@ def from_scanpy(
 
     """
 
-    if covariate_key is not None:
-        covariate_df = pd.DataFrame(adata.uns[covariate_key])
-    elif covariate_df is None:
-        print("No covariate information specified!")
-        return
-
     groups = adata.obs.value_counts([sample_identifier, cell_type_identifier])
     count_data = groups.unstack(level=cell_type_identifier)
     count_data = count_data.fillna(0)
 
+    if covariate_key is not None:
+        covariate_df = pd.DataFrame(adata.uns[covariate_key])
+    elif covariate_df is None:
+        print("No covariate information specified!")
+        covariate_df = pd.DataFrame(index=count_data.index)
+
+    if set(covariate_df.index) != set(count_data.index):
+        raise ValueError("anndata sample names and covariate_df index do not have the same elements!")
+    covs_ord = covariate_df.reindex(count_data.index)
+    covs_ord.index = covs_ord.index.astype(str)
+
+    var_dat = count_data.sum(axis=0).rename("n_cells").to_frame()
+    var_dat.index = var_dat.index.astype(str)
+
     return ad.AnnData(X=count_data.values,
-                      var=count_data.sum(axis=0).rename("n_cells").to_frame(),
-                      obs=covariate_df)
+                      var=var_dat,
+                      obs=covs_ord)
 
 
 def from_pandas(
@@ -266,6 +287,7 @@ def from_pandas(
     """
 
     covariate_data = df.loc[:, covariate_columns]
+    covariate_data.index = covariate_data.index.astype(str)
     count_data = df.loc[:, ~df.columns.isin(covariate_data)]
     celltypes = pd.DataFrame(index=count_data.columns)
 

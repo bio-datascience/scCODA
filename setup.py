@@ -18,13 +18,24 @@ URL = 'https://github.com/theislab/scCODA'
 EMAIL = 'johannes.ostner@helmholtz-muenchen.de'
 AUTHOR = 'Johannes Ostner, Benjamin Schubert'
 REQUIRES_PYTHON = '>=3.7.0'
-VERSION = "0.1.4"
+VERSION = "0.1.7"
 
 # What packages are required for this module to be executed?
 REQUIRED = [
-    "numpy", "scipy", "tensorflow>=2.4.0", "tensorflow-probability>=0.12.0",
-    "arviz>=0.10", "seaborn", "pandas>=1.0", "matplotlib", "scanpy", "anndata",
-    "patsy", "sklearn", "statsmodels", "rpy2",
+    "numpy>=1.21",
+    "scipy",
+    "tensorflow>=2.8",
+    "tensorflow-probability>=0.16.0",
+    "arviz>=0.11",
+    "seaborn",
+    "pandas>=1.0",
+    "matplotlib>=3.0",
+    "scanpy",
+    "anndata",
+    "patsy",
+    "sklearn",
+    "statsmodels",
+    "rpy2",
 ]
 
 # What packages are optional?
